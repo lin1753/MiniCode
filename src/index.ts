@@ -24,6 +24,10 @@ import {
   createContextCollapseState,
 } from './compact/context-collapse.js'
 import { createContentReplacementState } from './utils/tool-result-storage.js'
+import { createSpawnAgentTool } from './tools/spawn-agent.js'
+import { MemoryStore } from './memory/store.js'
+import { retrieveRelevantMemories, renderMemoriesForPrompt } from './memory/retriever.js'
+import { postTurnReflection } from './memory/reflection.js'
 
 async function main(): Promise<void> {
   const cwd = process.cwd()
@@ -82,6 +86,16 @@ async function main(): Promise<void> {
     process.env.MINI_CODE_MODEL_MODE === 'mock'
       ? new MockModelAdapter()
       : new AnthropicModelAdapter(tools, loadRuntimeConfig)
+
+  // Register the spawn_agent tool (needs model + permissions which are now available)
+  tools.addTools([
+    createSpawnAgentTool({ cwd, tools, model, permissions, modelName: process.env.MINI_CODE_MODEL_MODE === 'mock' ? 'mock' : '' }),
+  ])
+
+  // Initialize the self-evolving memory system
+  const memoryStore = new MemoryStore()
+  await memoryStore.load()
+
   let messages: ChatMessage[] = [
     {
       role: 'system',
@@ -95,11 +109,20 @@ async function main(): Promise<void> {
   const contextCollapseState = createContextCollapseState()
 
   async function refreshSystemPrompt(): Promise<void> {
+    // Retrieve relevant memories for the current user input
+    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user')
+    const dynamicMemories = lastUserMsg
+      ? renderMemoriesForPrompt(
+          retrieveRelevantMemories({ query: lastUserMsg.content, store: memoryStore }),
+        )
+      : ''
+
     messages[0] = {
       role: 'system',
       content: await buildSystemPrompt(cwd, permissions.getSummary(), {
         skills: tools.getSkills(),
         mcpServers: tools.getMcpServers(),
+        dynamicMemories,
       }),
     }
   }
@@ -131,6 +154,7 @@ async function main(): Promise<void> {
         sessionId,
         alreadySavedCount: 0,
         resumeTarget: resolvedResumeTarget,
+        memoryStore,
       })
       return
     }
@@ -262,6 +286,16 @@ async function main(): Promise<void> {
       } finally {
         permissions.endTurn()
       }
+
+      // Post-turn reflection: extract memories asynchronously (non-blocking)
+      postTurnReflection({
+        messages,
+        model,
+        store: memoryStore,
+        sessionId: 'cli',
+      }).catch(() => {
+        // Reflection errors are silently swallowed
+      })
 
       const lastAssistant = [...messages]
         .reverse()

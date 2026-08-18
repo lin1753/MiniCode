@@ -8,6 +8,7 @@ export async function buildSystemPrompt(
   extras?: {
     skills?: SkillSummary[]
     mcpServers?: McpServerSummary[]
+    dynamicMemories?: string
   },
 ): Promise<string> {
   const parts = [
@@ -22,12 +23,23 @@ export async function buildSystemPrompt(
     'Do not choose subjective preferences such as colors, visual style, copy tone, or naming unless the user explicitly told you to decide yourself.',
     'When using read_file, pay attention to the header fields. If it says TRUNCATED: yes, continue reading with a larger offset before concluding that the file itself is cut off.',
     'If the user names a skill or clearly asks for a workflow that matches a listed skill, call load_skill before following it.',
+    'Skill routing:',
+    '- When starting a task, use route_skill to discover relevant skills before load_skill.',
+    '- route_skill ranks skills by relevance using intent matching, tags, and boundary rules.',
+    '- Call route_skill with a task description to get ranked skill recommendations.',
+    '- If route_skill finds a relevant match, call load_skill with that skill name.',
     'Structured response protocol:',
     '- When you are still working and will continue with more tool calls, start your text with <progress>.',
     '- Only when the task is actually complete and you are ready to hand control back, start your text with <final>.',
     '- Use ask_user when clarification is required; that tool ends the turn and waits for user input.',
     '- Do not stop after a progress update. After a <progress> message, continue the task in the next step.',
     '- Plain assistant text without <progress> is treated as a completed assistant message for this turn.',
+    'Sub-agent delegation:',
+    '- You can delegate focused sub-tasks by calling the spawn_agent tool.',
+    '- Sub-agents run with limited tool access and return their results as text.',
+    '- Available agent types: "code-reviewer" (read-only), "test-runner", "researcher", "coder".',
+    '- Use spawn_agent for: independent code review, parallel research, test execution, isolated sub-tasks.',
+    '- Do NOT use spawn_agent for tasks that require full conversation context from the main thread.',
   ]
 
   if (permissionSummary.length > 0) {
@@ -92,6 +104,11 @@ export async function buildSystemPrompt(
   const memorySection = await loadMemory(cwd)
   if (memorySection) {
     parts.push(memorySection)
+  }
+
+  // Inject dynamically retrieved memories from the self-evolving memory system
+  if (extras?.dynamicMemories) {
+    parts.push(extras.dynamicMemories)
   }
 
   return parts.join('\n\n')

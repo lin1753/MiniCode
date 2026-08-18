@@ -8,6 +8,9 @@ export type SkillSummary = {
   description: string
   path: string
   source: 'project' | 'user' | 'compat_project' | 'compat_user'
+  tags?: string[]
+  triggers?: string[]
+  priority?: number
 }
 
 export type LoadedSkill = SkillSummary & {
@@ -23,7 +26,17 @@ type SkillScope = 'user' | 'project'
 
 function extractDescription(markdown: string): string {
   const normalized = markdown.replace(/\r\n/g, '\n')
-  const paragraphs = normalized
+
+  // Skip YAML frontmatter block (--- delimited) if present at start
+  let content = normalized
+  if (content.startsWith('---')) {
+    const endIndex = content.indexOf('\n---', 3)
+    if (endIndex !== -1) {
+      content = content.slice(endIndex + 4).trim()
+    }
+  }
+
+  const paragraphs = content
     .split('\n\n')
     .map(block => block.trim())
     .filter(Boolean)

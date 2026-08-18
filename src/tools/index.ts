@@ -2,6 +2,7 @@ import type { McpServerConfig, RuntimeConfig } from '../config.js'
 import type { McpServerSummary } from '../mcp.js'
 import { createMcpBackedTools } from '../mcp.js'
 import { discoverSkills } from '../skills.js'
+import { SkillRouter } from '../skill-router.js'
 import { ToolRegistry } from '../tool.js'
 import { askUserTool } from './ask-user.js'
 import { editFileTool } from './edit-file.js'
@@ -12,6 +13,7 @@ import { modifyFileTool } from './modify-file.js'
 import { patchFileTool } from './patch-file.js'
 import { readFileTool } from './read-file.js'
 import { runCommandTool } from './run-command.js'
+import { createRouteSkillTool } from './route-skill.js'
 import { webFetchTool } from './web-fetch.js'
 import { webSearchTool } from './web-search.js'
 import { writeFileTool } from './write-file.js'
@@ -46,6 +48,10 @@ export async function createDefaultToolRegistry(args: {
   const skills = await discoverSkills(args.cwd)
   const mcpServers = args.runtime?.mcpServers ?? {}
 
+  // Build skill router index for route_skill tool
+  const skillRouter = new SkillRouter()
+  await skillRouter.refreshIndex(args.cwd)
+
   return new ToolRegistry([
     askUserTool,
     listFilesTool,
@@ -57,6 +63,7 @@ export async function createDefaultToolRegistry(args: {
     patchFileTool,
     runCommandTool,
     createLoadSkillTool(args.cwd),
+    createRouteSkillTool(skillRouter, args.cwd),
     webFetchTool,
     webSearchTool,
   ], {

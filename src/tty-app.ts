@@ -76,6 +76,11 @@ import {
   createContentReplacementState,
   type ContentReplacementState,
 } from './utils/tool-result-storage.js'
+import { createSpawnAgentTool } from './tools/spawn-agent.js'
+import type { MemoryStore } from './memory/store.js'
+import { MemoryStore as MemoryStoreImpl } from './memory/store.js'
+import { retrieveRelevantMemories, renderMemoriesForPrompt } from './memory/retriever.js'
+import { postTurnReflection } from './memory/reflection.js'
 
 type TtyAppArgs = {
   runtime: RuntimeConfig | null
@@ -89,6 +94,7 @@ type TtyAppArgs = {
   sessionId: string
   alreadySavedCount: number
   resumeTarget?: string | 'picker'
+  memoryStore: MemoryStore
 }
 
 type PendingApproval = {
@@ -865,11 +871,20 @@ function createRenderScheduler(renderNow: () => void): () => void {
 }
 
 async function refreshSystemPrompt(args: TtyAppArgs): Promise<void> {
+  // Retrieve relevant memories for the current user input
+  const lastUserMsg = [...args.messages].reverse().find(m => m.role === 'user')
+  const dynamicMemories = lastUserMsg
+    ? renderMemoriesForPrompt(
+        retrieveRelevantMemories({ query: lastUserMsg.content, store: args.memoryStore }),
+      )
+    : ''
+
   args.messages[0] = {
     role: 'system',
     content: await buildSystemPrompt(args.cwd, args.permissions.getSummary(), {
       skills: args.tools.getSkills(),
       mcpServers: args.tools.getMcpServers(),
+      dynamicMemories,
     }),
   }
 }
@@ -1600,6 +1615,16 @@ async function handleInput(
     args.messages.push(...nextMessages)
     await saveSession(args.cwd, args.sessionId, args.messages, args.alreadySavedCount)
     args.alreadySavedCount = args.messages.length - 1
+
+    // Post-turn reflection: extract memories asynchronously (non-blocking)
+    postTurnReflection({
+      messages: args.messages,
+      model: args.model,
+      store: args.memoryStore,
+      sessionId: args.sessionId,
+    }).catch(() => {
+      // Reflection errors are silently swallowed
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     args.messages.push({
@@ -1679,6 +1704,10 @@ export async function runTtyApp(args: TtyAppArgs): Promise<void> {
   }
   state.historyIndex = state.history.length
 
+  // Initialize memory store for self-evolving memory system
+  const memoryStore = new MemoryStoreImpl()
+  await memoryStore.load()
+
   const permissionArgs: TtyAppArgs = {
     ...args,
     contentReplacementState:
@@ -1689,11 +1718,24 @@ export async function runTtyApp(args: TtyAppArgs): Promise<void> {
       args.cwd,
       createPermissionPromptHandler(state, () => scheduleRender()),
     ),
+    memoryStore,
   }
   const renderNow = () => renderScreen(permissionArgs, state)
   let scheduleRender = renderNow
   scheduleRender = createRenderScheduler(renderNow)
   await permissionArgs.permissions.whenReady()
+
+  // Register the spawn_agent tool (needs model + permissions which are now available)
+  permissionArgs.tools.addTools([
+    createSpawnAgentTool({
+      cwd: permissionArgs.cwd,
+      tools: permissionArgs.tools,
+      model: permissionArgs.model,
+      permissions: permissionArgs.permissions,
+      modelName: args.runtime?.model ?? '',
+    }),
+  ])
+
   if (
     permissionArgs.messages.length === 0 ||
     permissionArgs.messages[0]?.role !== 'system'

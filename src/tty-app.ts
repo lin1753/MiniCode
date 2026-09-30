@@ -225,6 +225,29 @@ export const WELCOME_ESCAPE_FRAMES = [
             `,
 ]
 
+const LOGO_CYAN = '\x1b[38;2;56;189;248m'
+const LOGO_TEAL = '\x1b[38;2;45;212;191m'
+const LOGO_EMERALD = '\x1b[38;2;52;211;153m'
+const RESET = '\x1b[0m'
+
+export const LOGO_ASCII_LARGE = [
+  `${LOGO_CYAN}███╗   ███╗██╗███╗   ██╗██╗ ██████╗ ██████╗ ██████╗ ███████╗${RESET}`,
+  `${LOGO_CYAN}████╗ ████║██║████╗  ██║██║██╔════╝██╔═══██╗██╔══██╗██╔════╝${RESET}`,
+  `${LOGO_TEAL}██╔████╔██║██║██╔██╗ ██║██║██║     ██║   ██║██║  ██║█████╗  ${RESET}`,
+  `${LOGO_TEAL}██║╚██╔╝██║██║██║╚██╗██║██║██║     ██║   ██║██║  ██║██╔══╝  ${RESET}`,
+  `${LOGO_EMERALD}██║ ╚═╝ ██║██║██║ ╚████║██║╚██████╗╚██████╔╝██████╔╝███████╗${RESET}`,
+  `${LOGO_EMERALD}╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝${RESET}`,
+]
+
+export const LOGO_ASCII_SMALL = [
+  `${LOGO_CYAN}   __  ____      _ ____          __   ${RESET}`,
+  `${LOGO_CYAN}  /  |/  (_)__  (_) ___/__  ____/ /__ ${RESET}`,
+  `${LOGO_TEAL} / /|_/ / / _ \\/ / /__/ _ \\/ _  / -_) ${RESET}`,
+  `${LOGO_EMERALD}/_/  /_/_/_//_/_/\\___/\\___/\\_,_/\\__/  ${RESET}`,
+]
+
+export const LOGO_ASCII_ROWS = LOGO_ASCII_SMALL
+
 const WELCOME_MESSAGE = 'Welcome back!~'
 
 function formatRelativeTime(timestamp: number): string {
@@ -282,8 +305,15 @@ function renderPromptPanel(state: ScreenState): string {
 }
 
 function renderPermissionSummary(args: TtyAppArgs, state: ScreenState): string {
+  const summary = args.permissions.getSummary()
+  const hasExtraDirs = summary.some(s => s.startsWith('extra allowed dirs: ') && !s.endsWith('none'))
+  const hasDangerous = summary.some(s => s.startsWith('dangerous allowlist: ') && !s.endsWith('none'))
+  const hasTrustedEdit = summary.some(s => s.startsWith('trusted edit targets: '))
+  if (!hasExtraDirs && !hasDangerous && !hasTrustedEdit) {
+    return ''
+  }
   return renderPermissionSummaryLine(
-    args.permissions.getSummary(),
+    summary,
     state.inputHintFrame,
   )
 }
@@ -308,20 +338,11 @@ function renderFooterStatus(state: ScreenState): string {
 
 function getTranscriptBodyLines(args: TtyAppArgs, state: ScreenState): number {
   const rows = Math.max(24, process.stdout.rows ?? 40)
-  const headerLines = renderHeaderPanel(args, state).split('\n').length
-  const permissionSummaryLines = renderPermissionSummary(args, state).split('\n').length
   const promptLines = renderPromptPanel(state).split('\n').length
   const footerLines = 1
-  const gapsBetweenSections = 2
-  const transcriptPanelFrameLines = 0
-  const remaining =
-    rows -
-    headerLines -
-    permissionSummaryLines -
-    promptLines -
-    footerLines -
-    gapsBetweenSections -
-    transcriptPanelFrameLines
+  const permissionSummary = renderPermissionSummary(args, state)
+  const permissionLines = permissionSummary.length > 0 ? permissionSummary.split('\n').length : 0
+  const remaining = rows - promptLines - footerLines - permissionLines
 
   return Math.max(6, remaining)
 }
@@ -365,22 +386,39 @@ export function encodeClipboardTextForPlatform(
   return text
 }
 
-function copyToClipboard(text: string): void {
+export function buildOsc52Sequence(text: string): string {
+  const b64 = Buffer.from(text, 'utf8').toString('base64')
+  return `\x1b]52;c;${b64}\x07`
+}
+
+export function copyToClipboard(text: string): void {
+  if (!text) return
+
+  // 1. OSC 52 terminal clipboard escape sequence (works seamlessly in modern terminals like Windows Terminal, VS Code, iTerm2, SSH)
+  try {
+    if (process.stdout.isTTY) {
+      process.stdout.write(buildOsc52Sequence(text))
+    }
+  } catch {
+    // Silently ignore OSC 52 write error
+  }
+
+  // 2. Native platform clipboard tool as fallback
   try {
     const platform = process.platform
     const proc =
       platform === 'win32'
-        ? spawn('clip', { stdio: ['pipe', 'inherit', 'inherit'] })
+        ? spawn('clip', { stdio: ['pipe', 'ignore', 'ignore'] })
         : platform === 'darwin'
-          ? spawn('pbcopy', { stdio: ['pipe', 'inherit', 'inherit'] })
+          ? spawn('pbcopy', { stdio: ['pipe', 'ignore', 'ignore'] })
           : spawn('xclip', ['-selection', 'clipboard'], {
-              stdio: ['pipe', 'inherit', 'inherit'],
+              stdio: ['pipe', 'ignore', 'ignore'],
             })
     const payload = encodeClipboardTextForPlatform(platform, text)
     proc.stdin?.write(payload)
     proc.stdin?.end()
   } catch {
-    // Silently fail if clipboard is unavailable
+    // Silently fail if clipboard process is unavailable
   }
 }
 
@@ -535,6 +573,79 @@ function updateAssistantEntryBody(
     return
   }
   entry.body = body
+}
+
+export function renderWelcomeCard(context?: {
+  model?: string
+  cwd?: string
+  memoryCount?: number
+  savedSessionCount?: number
+  terminalWidth?: number
+  terminalRows?: number
+}): string {
+  const model = context?.model ?? 'qwen3.8-27b'
+  const cwd = context?.cwd
+    ? (context.cwd.length > 36 ? `...${context.cwd.slice(-33)}` : context.cwd)
+    : 'workspace'
+  const memCount = context?.memoryCount ?? 0
+  const sessionCount = context?.savedSessionCount ?? 0
+  const termWidth = context?.terminalWidth ?? (process.stdout.columns || 100)
+  const termRows = context?.terminalRows ?? (process.stdout.rows || 36)
+
+  const isLarge = termWidth >= 90
+  const banner = isLarge ? LOGO_ASCII_LARGE : LOGO_ASCII_SMALL
+  const bannerRawLen = isLarge ? 61 : 39
+  const cardWidth = Math.min(termWidth - 4, Math.max(bannerRawLen, isLarge ? 72 : 56))
+
+  const leftPadCount = Math.max(2, Math.floor((termWidth - cardWidth) / 2))
+  const pad = ' '.repeat(leftPadCount)
+
+  const logoLines = banner.map(row => {
+    const logoIndent = ' '.repeat(Math.max(0, Math.floor((cardWidth - bannerRawLen) / 2)))
+    return `${pad}${logoIndent}${row}`
+  })
+
+  const divider = '─'.repeat(cardWidth)
+
+  const contentLines = [
+    ...logoLines,
+    ``,
+    `${pad}  \x1b[1m\x1b[38;2;56;189;248mMiniCode\x1b[0m \x1b[2mv0.1.0 · Terminal AI Coding Agent\x1b[0m`,
+    `${pad}  \x1b[2mModel:\x1b[0m \x1b[38;2;45;212;191m${model}\x1b[0m      \x1b[2mWorkspace:\x1b[0m \x1b[2m${cwd}\x1b[0m`,
+    `${pad}\x1b[2m${divider}\x1b[0m`,
+    `${pad}  • Type a prompt to begin reading, editing code, running commands or tests`,
+    `${pad}  • \x1b[38;2;56;189;248m/help\x1b[0m for command palette · \x1b[38;2;56;189;248m/resume\x1b[0m to restore session${sessionCount > 0 ? ` (${sessionCount} saved)` : ''}`,
+    `${pad}  • \x1b[38;2;56;189;248m/copy\x1b[0m to copy last response · \x1b[33mCtrl+C\x1b[0m to interrupt running task`,
+    memCount > 0 ? `${pad}  • \x1b[2mMemory: ${memCount} instruction file(s) active\x1b[0m` : `${pad}  • \x1b[2mPress Shift+drag for native terminal text selection\x1b[0m`,
+  ]
+
+  // Vertical Centering: calculate available viewport rows minus prompt and footer (~7 rows)
+  const availableRows = Math.max(10, termRows - 7)
+  const topPadCount = Math.max(1, Math.floor((availableRows - contentLines.length) / 2))
+  const topPadding = Array(topPadCount).fill('')
+
+  return [...topPadding, ...contentLines].join('\n')
+}
+
+export function pushWelcomeCard(
+  state: ScreenState,
+  context?: {
+    model?: string
+    cwd?: string
+    memoryCount?: number
+    savedSessionCount?: number
+    terminalWidth?: number
+    terminalRows?: number
+  },
+): number {
+  return pushTranscriptEntry(state, {
+    kind: 'assistant',
+    body: renderWelcomeCard({
+      ...context,
+      terminalWidth: context?.terminalWidth ?? process.stdout.columns ?? 100,
+      terminalRows: context?.terminalRows ?? process.stdout.rows ?? 36,
+    }),
+  })
 }
 
 export function pushWelcomeAnimation(state: ScreenState): void {
@@ -752,10 +863,7 @@ function extractPathFromToolInput(input: unknown): string | null {
 function renderScreen(args: TtyAppArgs, state: ScreenState): void {
   const backgroundTasks = listBackgroundTasks()
   const frame: string[] = []
-  const headerPanel = renderHeaderPanel(args, state)
-  frame.push(headerPanel)
-  frame.push('')
-  state.transcriptBodyStartY = headerPanel.split('\n').length + 4
+  state.transcriptBodyStartY = 1
   state.transcriptBodyLines = getTranscriptBodyLines(args, state)
 
   if (state.pendingApproval) {
@@ -840,7 +948,10 @@ function renderScreen(args: TtyAppArgs, state: ScreenState): void {
       },
     ),
   )
-  frame.push(renderPermissionSummary(args, state))
+  const permissionSummary = renderPermissionSummary(args, state)
+  if (permissionSummary.length > 0) {
+    frame.push(permissionSummary)
+  }
   frame.push(renderPromptPanel(state))
   frame.push(
     renderFooterBar(
@@ -1346,6 +1457,27 @@ async function handleInput(
     return false
   }
 
+  if (input === '/copy') {
+    const lastAssistant = [...state.transcript]
+      .reverse()
+      .find(entry => entry.kind === 'assistant' && entry.body.trim().length > 0)
+
+    if (lastAssistant) {
+      copyToClipboard(lastAssistant.body)
+      setStatus(state, '已复制最后一条回答到剪贴板')
+      pushTranscriptEntry(state, {
+        kind: 'assistant',
+        body: '已将最后一条助手回答复制到剪贴板。',
+      })
+    } else {
+      pushTranscriptEntry(state, {
+        kind: 'assistant',
+        body: '当前会话中暂无助手回答可复制。',
+      })
+    }
+    return false
+  }
+
   const localCommandResult = await tryHandleLocalCommand(input, {
     cwd: args.cwd,
     tools: args.tools,
@@ -1743,24 +1875,16 @@ export async function runTtyApp(args: TtyAppArgs): Promise<void> {
     await refreshSystemPrompt(permissionArgs)
   }
 
-  pushWelcomeAnimation(state)
-
-  // Show loaded instruction files at startup
   const memoryFiles = await discoverInstructionFiles(args.cwd)
-  if (memoryFiles.length > 0) {
-    const lines = [
-      `Memory: ${memoryFiles.length} instruction file(s) loaded`,
-      ...memoryFiles.map((f, i) => {
-        const lineCount = f.content.split('\n').length
-        const preview = f.content.trim().split('\n')[0] || '<empty>'
-        return `  ${i + 1}. ${f.path}\n     lines=${lineCount} preview=${preview}`
-      }),
-    ]
-    pushTranscriptEntry(state, {
-      kind: 'assistant',
-      body: lines.join('\n'),
-    })
-  }
+  await cleanupExpiredSessions(args.cwd, 30 * 24 * 60 * 60 * 1000)
+  const sessions = await listSessions(args.cwd)
+
+  pushWelcomeCard(state, {
+    model: args.runtime?.model,
+    cwd: args.cwd,
+    memoryCount: memoryFiles.length,
+    savedSessionCount: sessions.length,
+  })
 
   let deferredResumeInput: string | null = null
   if (permissionArgs.resumeTarget) {
@@ -1773,21 +1897,6 @@ export async function runTtyApp(args: TtyAppArgs): Promise<void> {
         scheduleRender,
         `/resume ${permissionArgs.resumeTarget}`,
       )
-    }
-  } else {
-    const expired = await cleanupExpiredSessions(args.cwd, 30 * 24 * 60 * 60 * 1000)
-    if (expired > 0) {
-      pushTranscriptEntry(state, {
-        kind: 'assistant',
-        body: `Cleaned up ${expired} expired session(s) (>30 days old).`,
-      })
-    }
-    const sessions = await listSessions(args.cwd)
-    if (sessions.length > 0) {
-      pushTranscriptEntry(state, {
-        kind: 'assistant',
-        body: `Found ${sessions.length} saved session(s). Type /resume to continue one.`,
-      })
     }
   }
 
@@ -2134,6 +2243,26 @@ export async function runTtyApp(args: TtyAppArgs): Promise<void> {
         const visibleCommands = getVisibleCommands(state.input)
 
         if (event.kind === 'text' && event.ctrl && event.text === 'c') {
+          if (state.selection) {
+            const text = extractSelectedText(state.transcript, state.selection)
+            if (text) {
+              copyToClipboard(text)
+              setStatus(state, '已复制选中内容到剪贴板')
+            }
+            state.selection = null
+            state.mouseDown = null
+            scheduleRender()
+            return
+          }
+
+          if (state.input.length > 0) {
+            state.input = ''
+            state.cursorOffset = 0
+            setStatus(state, null)
+            scheduleRender()
+            return
+          }
+
           finish()
           return
         }
@@ -2198,6 +2327,7 @@ export async function runTtyApp(args: TtyAppArgs): Promise<void> {
               const text = extractSelectedText(state.transcript, state.selection)
               if (text) {
                 copyToClipboard(text)
+                setStatus(state, '已复制选中内容到剪贴板')
               }
             }
             state.mouseDown = null

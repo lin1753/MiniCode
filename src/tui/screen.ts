@@ -29,8 +29,9 @@ export function showCursor(): void {
 
 export function enterAlternateScreen(): void {
   resetTerminalFrame()
+  const mouseTracking = process.env.MINI_CODE_MOUSE === '1' ? ENABLE_MOUSE_TRACKING : ''
   process.stdout.write(
-    DISABLE_MOUSE_TRACKING + ENTER_ALT_SCREEN + ERASE_SCREEN_AND_HOME + ENABLE_MOUSE_TRACKING,
+    DISABLE_MOUSE_TRACKING + ENTER_ALT_SCREEN + ERASE_SCREEN_AND_HOME + mouseTracking,
   )
 }
 

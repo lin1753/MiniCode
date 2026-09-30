@@ -97,7 +97,6 @@ If a PR changes user-facing behavior, please update the relevant documentation.
 This may include:
 
 - `README.md`
-- `README.zh-CN.md`
 - architecture docs
 - new command or configuration examples
 

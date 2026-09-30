@@ -95,7 +95,6 @@ MiniCode 当前的重要边界包括：
 常见包括：
 
 - `README.md`
-- `README.zh-CN.md`
 - 架构文档
 - 新命令或新配置示例
 

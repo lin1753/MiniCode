@@ -78,6 +78,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: 'Fork current session into a new independent session.',
   },
   {
+    name: '/copy',
+    usage: '/copy',
+    description: 'Copy the last assistant response to clipboard.',
+  },
+  {
     name: '/permissions',
     usage: '/permissions',
     description: 'Show mini-code permission storage path.',

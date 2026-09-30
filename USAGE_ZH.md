@@ -1,6 +1,6 @@
 # MiniCode 详细使用指南
 
-[返回 README](./README.zh-CN.md) | [English](./USAGE.md)
+[返回 README](./README.md) | [English](./USAGE.md)
 
 这份文档承接原 README 中偏操作手册的内容：完整命令、长会话、配置、Skills/MCP、项目结构和代码规模。主 README 现在只保留项目入口和核心介绍。
 

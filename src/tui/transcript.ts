@@ -158,12 +158,19 @@ function renderWorkedForDivider(seconds: number): string {
   return `${' '.repeat(Math.max(0, inner - labelWidth))}${label}`
 }
 
+function isWelcomeCardBody(body: string): boolean {
+  return body.includes('MiniCode') && (body.includes('/help') || body.includes('Terminal AI Coding Agent'))
+}
+
 function renderTranscriptEntry(entry: TranscriptEntry): string {
   if (entry.kind === 'user') {
     return `${CYAN}${BOLD}you${RESET}\n${renderUserBody(entry.body)}`
   }
 
   if (entry.kind === 'assistant') {
+    if (isWelcomeCardBody(entry.body)) {
+      return entry.body
+    }
     const header = `${GREEN}${BOLD}Minicode${RESET}\n${indentBlock(
       renderMarkdownish(entry.body),
     )}`
